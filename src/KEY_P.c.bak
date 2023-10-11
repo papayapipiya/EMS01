@@ -1,0 +1,166 @@
+﻿#include <asf.h>
+#include <stdio.h>
+#include "myDefine.h"
+
+
+void Print_One_Form_Write_PLC_List_Table(volatile Write_PLC_List_t *tmp_Write_PLC_List_Index, unsigned int tmp_index)
+{
+	unsigned char tmpIndex;
+	uTXByte(Debug_COM, 'N');
+	uTXByte(Debug_COM, 'o');
+	uTXByte(Debug_COM, '.');
+	uTXByte(Debug_COM, '(');
+	uart_send_word_for_ListNumber(Debug_COM, hex_to_bcd(tmp_index));
+	uTXByte(Debug_COM, ')');
+	uTXByte(Debug_COM, ' ');
+
+	uTXByte(Debug_COM, '[');
+	if(tmp_Write_PLC_List_Index[tmp_index].MAC_ID_Index.word == 0xffff) //沒有設定過
+	{
+		tmp_Write_PLC_List_Index[tmp_index].Channel_En = Dev_Dis;
+	}
+	if(tmp_Write_PLC_List_Index[tmp_index].Channel_En == Dev_Dis)
+		Print_Disable_CMD_Msg();
+	else
+		Print_Enable_CMD_Msg();
+	uTXByte(Debug_COM, ']');
+	uTXByte(Debug_COM, ' ');
+		
+	uTXByte(Debug_COM, '(');
+	if(tmp_Write_PLC_List_Index[tmp_index].MAC_ID_Index.word == 0xffff)
+	{
+		uTXByte(Debug_COM, '_');
+		uTXByte(Debug_COM, '_');
+		uTXByte(Debug_COM, '_');
+	}
+	else
+	{
+		uart_send_word_for_ListNumber(Debug_COM, hex_to_bcd(tmp_Write_PLC_List_Index[tmp_index].MAC_ID_Index.word));	
+	}
+	uTXByte(Debug_COM, ')');
+	uTXByte(Debug_COM, ' ');
+	tmpIndex = (unsigned char *)tmp_Write_PLC_List_Index[tmp_index].MAC_ID_Index.word;
+	uart_send_ascii_byte(Debug_COM, dev_value[tmpIndex][3]);
+	uart_send_ascii_byte(Debug_COM, dev_value[tmpIndex][4]);
+	uart_send_ascii_byte(Debug_COM, dev_value[tmpIndex][5]);
+	uart_send_ascii_byte(Debug_COM, dev_value[tmpIndex][6]);
+	
+	
+	uTXByte(Debug_COM, '-');
+	uTXByte(Debug_COM, 'R');
+	if(	tmp_Write_PLC_List_Index[tmp_index].MAC_ID_Index.word >= 0 &&
+		tmp_Write_PLC_List_Index[tmp_index].MAC_ID_Index.word < 8 )
+		uTXByte(Debug_COM, tmp_Write_PLC_List_Index[tmp_index].Channel_Index + 0x30);	
+	else
+		uTXByte(Debug_COM, '_');
+	
+	//uart_send_ascii_byte(Debug_COM, );
+	
+
+	// MAC ID INDEX
+	// dev_value[MAC ID INDEX][Channel_Index]
+	// dev_value[MAC ID INDEX][Channel_Index + 1]
+
+	unsigned char tmp_i = tmp_Write_PLC_List_Index[tmp_index].MAC_ID_Index.word;
+	unsigned char tmp_j = tmp_Write_PLC_List_Index[tmp_index].Channel_Index;
+	tmp_j = tmp_j * 2;
+	uTXByte(Debug_COM, ' ');
+	uTXByte(Debug_COM, ':');
+	uTXByte(Debug_COM, ' ');
+	uart_send_ascii_byte(Debug_COM, dev_value[tmp_i][8 + tmp_j]);
+	uart_send_ascii_byte(Debug_COM, dev_value[tmp_i][9 + tmp_j]);	
+}
+
+//void Judg_KEY_P(volatile Write_PLC_List_t *tmp_Write_PLC_List_Index)
+void Judg_KEY_P(void)
+{
+	volatile Write_PLC_List_t *tmp_Write_PLC_List_Index = Write_PLC_List_In_RAM;
+	unsigned int tmp_index;
+	unsigned char tmp_count;
+	tmp_count = 0;
+	if(	ascii_to_hex(UserKeyInBuf[0]) == KEYP && ascii_to_hex(UserKeyInBuf[1]) == KEYL)
+	{
+		switch(UserKeyInBufCount)
+		{
+			case 14:
+				if(UserKeyInBuf[13] != 0x0d)	{	break;	}
+				tmp_index =	Cal_list_table_index(UserKeyInBuf[3], UserKeyInBuf[4], UserKeyInBuf[5]);
+				Print_One_Form_Write_PLC_List_Table(tmp_Write_PLC_List_Index, tmp_index);
+				Print_Arrow_Right();
+				tmp_Write_PLC_List_Index[tmp_index].MAC_ID_Index.word = Cal_list_table_index(UserKeyInBuf[7], UserKeyInBuf[8], UserKeyInBuf[9]);
+				tmp_Write_PLC_List_Index[tmp_index].Channel_Index = ascii_to_hex(UserKeyInBuf[11]) * 10 + ascii_to_hex(UserKeyInBuf[12]);
+				tmp_Write_PLC_List_Index[tmp_index].Channel_En = 0;
+				Save_Write_PLC_List_in_NVM(tmp_Write_PLC_List_Index);
+				Load_Write_PLC_List_in_NVM(tmp_Write_PLC_List_Index);
+				Print_One_Form_Write_PLC_List_Table(tmp_Write_PLC_List_Index, tmp_index);
+				uTXByte(Debug_COM, 0x0d);
+				break;
+			
+			case 8:
+				if(ascii_to_hex(UserKeyInBuf[2]) != KEYE)	{	break;	}
+				if(UserKeyInBuf[7] != 0x0d)					{	break;	}
+				tmp_index =	Cal_list_table_index(UserKeyInBuf[4], UserKeyInBuf[5], UserKeyInBuf[6]);
+				Print_One_Form_Write_PLC_List_Table(tmp_Write_PLC_List_Index, tmp_index);
+				Print_Arrow_Right();
+				if(tmp_Write_PLC_List_Index[tmp_index].Channel_En == Dev_Dis)
+				{
+					tmp_Write_PLC_List_Index[tmp_index].Channel_En = Dev_EN;	
+				}
+				else
+				{
+					tmp_Write_PLC_List_Index[tmp_index].Channel_En = Dev_Dis;	
+				}
+				Save_Write_PLC_List_in_NVM(tmp_Write_PLC_List_Index);
+				Load_Write_PLC_List_in_NVM(tmp_Write_PLC_List_Index);
+				Print_One_Form_Write_PLC_List_Table(tmp_Write_PLC_List_Index, tmp_index);
+				uTXByte(Debug_COM, 0x0d);
+				break;
+			
+			case 3:
+				if(UserKeyInBuf[2] != 0x0d)	{	break;	}
+				for(unsigned int i = 0; i < Write_PLC_List_Max; i++)
+				{
+					Print_One_Form_Write_PLC_List_Table(tmp_Write_PLC_List_Index, i);
+					if(tmp_count == 2)
+					{
+						uTXByte(Debug_COM, 0x0d);
+						tmp_count = 0;
+					}
+					else
+					{
+						uTXByte(Debug_COM, 0x09);
+						tmp_count++;
+					}
+				}
+				break;
+		}		
+	}
+	
+	if(ascii_to_hex(UserKeyInBuf[0]) == KEYP)
+	{
+		switch(UserKeyInBufCount)
+		{
+			case 4:
+				if(ascii_to_hex(UserKeyInBuf[1]) != KEYL)	{	break;	}
+				if(ascii_to_hex(UserKeyInBuf[2]) != KEYC)	{	break;	}
+				if(UserKeyInBuf[3] != 0x0d)	{	break;	}
+				uart_str("PLC: \0");
+				if(LORA02->PLC_Flag == NeedPLC)
+				{
+					uart_str("OFF\0");
+					LORA02->PLC_Flag = NoPLC;
+				}
+				else
+				{
+					uart_str("ON\0");
+					LORA02->PLC_Flag = NeedPLC;
+				}
+				uTXByte(Debug_COM, 0x0d);
+				CMD_Save_Func(LORA02);
+				break;
+		}
+	}
+}
+
+
+	

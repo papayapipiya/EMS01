@@ -1,0 +1,98 @@
+﻿#include <asf.h>
+#include <stdio.h>
+#include "myDefine.h"
+
+
+
+void tc_callback_to_to_period_51200us(struct tc_module *const module_inst)
+{
+	usart_read_buffer_job(Debug_COM, (uint8_t *)user_rx_buffer, MAX_RX_BUFFER_LENGTH);	
+	//計數Dev List設定Polling的時間
+	if(LORA01->Lora_Dev_Count_IRQ_Flag == 0)
+	{
+		if(LORA01->t2_tmp_count > 19)	//51.2ms * 20 = 1024ms
+			LORA01->Lora_Dev_Count_IRQ_Flag = 1;
+		else
+			LORA01->t2_tmp_count++;
+	}
+	
+	if(LORA01->Sensor_Count < 9)	LORA01->Sensor_Count++;
+	
+	
+	#if	defined(Dev_Weight)
+		//51.2ms * 20 = 1024ms = 1.24 sec
+		if(sw_0_timer < sw_0_timer_Max)		sw_0_timer++;
+		if(sw_2000_timer < sw_2000_timer_Max)	sw_2000_timer++;
+	#elif defined(Dev_Water)
+		//五分鐘確認一次水表是否有變化，如果有變化將儲存，沒有將等待下一次五分鐘
+		if(water_nvm_savetimer_count < water_nvm_savetimer_count_Max)	water_nvm_savetimer_count++;
+	#elif defined(Dev_PLC_001)
+		// 51200us x 10 = 512,000 us
+		if(RS485_Time_Count < 10)	RS485_Time_Count++;
+	#elif defined(Dev_PLC_002)
+		if(RS485_Time_Count < 10)	RS485_Time_Count++;
+	#elif defined(Dev_Repeater)
+		if(RS485_Time_Count < 10)	RS485_Time_Count++;
+	#elif defined(Dev_Sensor)
+		if(Dust_Time_Count < Dust_TimeOut_Max)		Dust_Time_Count++;
+		if(Sensor_Module_Time_Count > 0)			Sensor_Module_Time_Count--;
+	#elif defined(Dev_Feed_Weigher)
+		if(OverCount > 0)	OverCount--;
+	#endif
+	
+}
+
+
+void tc_callback_to_to_period_200us(struct tc_module *const module_inst)
+{
+	usart_read_buffer_job(Debug_COM, (uint8_t *)user_rx_buffer, MAX_RX_BUFFER_LENGTH);	
+	if(LORA01->f_count < Timer_Timeout)	LORA01->f_count++;
+	if(LORA02->f_count < Timer_Timeout)	LORA02->f_count++;
+}
+
+//! [setup]
+void configure_tc(void)
+{
+	//! [setup_config]
+	struct tc_config config_tc;
+	//! [setup_config]
+	//! [setup_config_defaults]
+	tc_get_config_defaults(&config_tc);
+	//! [setup_config_defaults]
+
+	//! [setup_change_config]
+	config_tc.clock_source    = GCLK_GENERATOR_1;
+	config_tc.counter_size    = TC_COUNTER_SIZE_16BIT;
+	config_tc.clock_prescaler  =TC_CLOCK_PRESCALER_DIV16;
+	config_tc.wave_generation = TC_WAVE_GENERATION_MATCH_FREQ;
+	config_tc.counter_16_bit.compare_capture_channel[0] = 50;
+	config_tc.counter_16_bit.compare_capture_channel[1] = 50;
+	
+	tc_init(&MyTimer02, TC2, &config_tc);
+	tc_enable(&MyTimer02);
+
+	config_tc.clock_prescaler  =TC_CLOCK_PRESCALER_DIV1024;
+	config_tc.wave_generation = TC_WAVE_GENERATION_MATCH_FREQ;
+	config_tc.counter_16_bit.compare_capture_channel[0] = 50;
+	config_tc.counter_16_bit.compare_capture_channel[1] = 50;
+	tc_init(&MyTimer01, TC1, &config_tc);
+	tc_enable(&MyTimer01);
+	
+	//! [setup_enable]
+	
+}
+//! [setup]
+void configure_tc_callbacks(void)
+{
+	tc_register_callback(&MyTimer02, tc_callback_to_to_period_200us, TC_CALLBACK_CC_CHANNEL1);
+	tc_enable_callback(&MyTimer02, TC_CALLBACK_CC_CHANNEL1);
+	
+	tc_register_callback(&MyTimer01, tc_callback_to_to_period_51200us, TC_CALLBACK_CC_CHANNEL0);
+	tc_enable_callback(&MyTimer01, TC_CALLBACK_CC_CHANNEL0);
+}
+
+void timer_configure(void)
+{
+	configure_tc();
+	configure_tc_callbacks();
+}

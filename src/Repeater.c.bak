@@ -1,0 +1,392 @@
+#include <asf.h>
+#include <stdio.h>
+#include "myDefine.h"
+
+
+
+//=================================================
+#ifdef Dev_Repeater
+//=================================================
+
+
+void Dev_Value_inital(void)
+{
+	unsigned int i,j,k;
+	volatile PLC_Dev_List_t *PLC_Dev_List_Index = PLC_D_Buf;
+	volatile LORA_Dev_List_t *LORA_Dev_List_Index = LORA_Dev_List_In_RAM;
+	RS485_CMD_Index = 1;
+	RS485_LORA_OUT_Index = 0;
+	RS485_WR_Index = 0;
+	RS485_RD_Index = 0;
+	PLC_SENSOR_SELECT_FLAG = 0;
+	Form_CMD_Addr = 0;
+	Form_CMD_Val = 0;
+	Form_CMD_Addr_And_Val_Is_3rd_Flag = 0;
+	PLC_Show_w_Flag = false;
+	
+	j = 0;
+	k = 0;
+	for(i = 0; i < PLC_D_Buf_Max; i++)
+	{
+		if(PLC_D_Buf_Print_Columns_Max == j)
+		{
+			k++;
+			j = 0;
+		}	
+		PLC_Dev_List_Index[i].DataBuf.byte[1] = 0x00;
+		PLC_Dev_List_Index[i].DataBuf.byte[0] = 0x00;
+		PLC_Dev_List_Index[i].Chage_Flag_Index = k;		
+		j++;
+	}
+	Form_CMD_RS485_Flag = 0;
+	for(i = 0; i < PLC_D_Buf_Page; i++)
+	{
+		PLC_D_Check_Equel_Flag[i] = Dev_Have_New_Data;
+	}
+}
+
+
+
+
+
+
+
+void Wait_RX_IRQ_Index_Func(volatile LORA_DEFINE_t *tmp_LORA)
+{
+	if(tmp_LORA == LORA01)	// Dev To Repeater
+	{
+		if(tmp_LORA->f_count > Lora_Wait_RX_Delay_1500ms)
+		{
+			tmp_LORA->f_count = 0;
+			Setting_Lora_To_Tx_Mode_Func(tmp_LORA);
+			tmp_LORA->LoRa_Tx_Send_Time_Out_Count++;
+		}
+		else
+		if(tmp_LORA->LoRa_IRQ_Flag == 1)
+		{
+			tmp_LORA->f_count = 0;
+			LED_R_ON
+			wdt_reset_count();
+			change_and_check(&(tmp_LORA->NowStatus), Read_LoRa_RxBuffer_Index);
+		}
+	}
+	else if(tmp_LORA == LORA02)	// Master To Repeater
+	{
+		if(tmp_LORA->LoRa_IRQ_Flag == 1)
+		{
+			LED_B_ON
+			wdt_reset_count();
+			change_and_check(&(tmp_LORA->NowStatus), Read_LoRa_RxBuffer_Index);
+		}
+	}
+}
+
+
+// LoRa 1 ask the data form the device.
+void Response_LORA(volatile LORA_DEFINE_t *tmp_LORA, volatile LORA_Dev_List_t *tmp_LORA_Dev_List_Index)
+{
+	UINT16u_t Target, Source;
+	//uart_str("TEST... \0");
+	switch(tmp_LORA->NowStatus)
+	{
+		case NOP_Index:
+			//tmp_LORA->List_Now = 0;
+			//uart_send_word_for_ListNumber(Debug_COM, hex_to_bcd(tmp_LORA->List_Now));
+			//uart_str(" \0");
+			//uart_send_word(Debug_COM, hex_to_bcd(tmp_LORA_Dev_List_Index[tmp_LORA->List_Now].Now_Counter.word));
+			//uart_str(" \0");
+			//uart_send_word(Debug_COM, hex_to_bcd(tmp_LORA_Dev_List_Index[tmp_LORA->List_Now].Dev_Time.word));
+			//uart_str("\r\0");
+			if(	tmp_LORA_Dev_List_Index[tmp_LORA->List_Now].Now_Counter.word > 
+				tmp_LORA_Dev_List_Index[tmp_LORA->List_Now].Dev_Time.word)
+			{
+				//uart_str("TimeOut...\r\0");
+				tmp_LORA_Dev_List_Index[tmp_LORA->List_Now].Now_Counter.word = 0;
+				//LORA進入TX Mode
+				Setting_Lora_To_Tx_Mode_Func(tmp_LORA);
+				//Show Mode Display
+				if(tmp_LORA->Lora_Show_Flag == true)
+				{
+					Print_Lora_number(tmp_LORA);
+					Print_Send_Dev_No_Msg(tmp_LORA);
+					uTXByte(Debug_COM, 0x09);
+					uart_str("Output: \0");
+					Print_Write_Buffer();
+					uTXByte(Debug_COM, 0x0d);
+				}
+			}
+			else
+			{
+				//尋找下一個Dev List是Enable的Index，並將Dev ID存入LORA TX Buffer
+				Find_Now_And_Next_Enable_Func(tmp_LORA, tmp_LORA_Dev_List_Index);
+			}
+			//tmp_LORA->f_count;
+			break;
+	
+		case Lora_Rx_Data_Ready_Index:
+			tmp_LORA->f_count = 0;
+			//檢查回來的Dev ID是否與要詢問的Dev ID一置，並將收到的資料存起來
+			Catch_Data_Form_RX_Func(tmp_LORA);
+			//Show Mode Display
+			if(tmp_LORA->Lora_Show_Flag == true)
+			{
+				Print_Catch_Data_Form_RX_Msg(tmp_LORA, tmp_LORA_Dev_List_Index);
+			}
+			tmp_LORA->NowStatus = NOP_Index;
+			break;
+	
+		case Wait_RX_IRQ_Index:
+			if(tmp_LORA->LoRa_Tx_Send_Time_Out_Count > 1)
+			{
+				//RX Time Out超過2次
+				tmp_LORA->LoRa_Tx_Send_Time_Out_Count = 0;
+				//記錄Dev ID為Missnode
+				dev_value[tmp_LORA->List_Now][dev_value_missnode] = Dev_Miss_Node;
+				//Show Mode Display
+				if(tmp_LORA->Lora_Show_Flag == true)
+				{
+					Print_MissNode_Form_RX_Msg(tmp_LORA, tmp_LORA_Dev_List_Index);
+				}
+				//尋找下一個Dev List是Enable的Index，並將Dev ID存入LORA TX Buffer
+				Find_Now_And_Next_Enable_Func(tmp_LORA, tmp_LORA_Dev_List_Index);
+				tmp_LORA->NowStatus = NOP_Index;
+			}
+			break;
+	}
+}
+
+void LORA02_Fill_UpLoad_Function(volatile LORA_DEFINE_t *tmp_LORA)
+{
+	unsigned int tmp_index;
+	unsigned int i,k;
+	volatile PLC_Dev_List_t *PLC_Dev_List_Index = PLC_D_Buf;
+	
+	k = 0;
+	for(i = RS485_LORA_OUT_Index; k < PLC_D_Buf_Page; i = (i + 1) % (PLC_D_Buf_Page))
+	{
+		if(PLC_D_Check_Equel_Flag[i] == Dev_Have_New_Data)
+		{
+			PLC_D_Check_Equel_Flag[i] = Dev_Not_New_Data;
+			RS485_LORA_OUT_Index = i;
+			break;
+		}	
+		k++;
+	}
+
+	
+	tmp_LORA->MyLoRaTmp[Write_LoRa_TxBuffer_Index][3] = tmp_LORA->MyLoRaID[0];
+	tmp_LORA->MyLoRaTmp[Write_LoRa_TxBuffer_Index][4] = tmp_LORA->MyLoRaID[1];
+	tmp_LORA->MyLoRaTmp[Write_LoRa_TxBuffer_Index][5] = tmp_LORA->MyLoRaID[2];
+	tmp_LORA->MyLoRaTmp[Write_LoRa_TxBuffer_Index][6] = tmp_LORA->MyLoRaID[3];
+	tmp_LORA->MyLoRaTmp[Write_LoRa_TxBuffer_Index][7] = 0xF0; // PLC
+	
+	tmp_LORA->MyLoRaTmp[Write_LoRa_Mode_FQ_Index][7] = tmp_LORA->MyBuffer[7];	//LoRA Power
+	tmp_LORA->MyLoRaPower = tmp_LORA->MyLoRaTmp[Write_LoRa_Mode_FQ_Index][7];
+	
+	tmp_LORA->MyLoRaTmp[Write_LoRa_TxBuffer_Index][8] = RS485_LORA_OUT_Index;
+	
+	tmp_LORA->MyLoRaTmp[Write_LoRa_TxBuffer_Index][9] = 0x00;	//格式
+	
+	tmp_index = RS485_LORA_OUT_Index * PLC_D_Buf_Print_Columns_Max;
+	
+	tmp_LORA->MyLoRaTmp[Write_LoRa_TxBuffer_Index][10] = PLC_Dev_List_Index[tmp_index].DataBuf.byte[1];
+	tmp_LORA->MyLoRaTmp[Write_LoRa_TxBuffer_Index][11] = PLC_Dev_List_Index[tmp_index].DataBuf.byte[0];
+	tmp_index++;
+	
+	tmp_LORA->MyLoRaTmp[Write_LoRa_TxBuffer_Index][12] = PLC_Dev_List_Index[tmp_index].DataBuf.byte[1];
+	tmp_LORA->MyLoRaTmp[Write_LoRa_TxBuffer_Index][13] = PLC_Dev_List_Index[tmp_index].DataBuf.byte[0];
+	tmp_index++;
+	
+	tmp_LORA->MyLoRaTmp[Write_LoRa_TxBuffer_Index][14] = PLC_Dev_List_Index[tmp_index].DataBuf.byte[1];
+	tmp_LORA->MyLoRaTmp[Write_LoRa_TxBuffer_Index][15] = PLC_Dev_List_Index[tmp_index].DataBuf.byte[0];
+	tmp_index++;
+	
+	tmp_LORA->MyLoRaTmp[Write_LoRa_TxBuffer_Index][16] = PLC_Dev_List_Index[tmp_index].DataBuf.byte[1];
+	tmp_LORA->MyLoRaTmp[Write_LoRa_TxBuffer_Index][17] = PLC_Dev_List_Index[tmp_index].DataBuf.byte[0];
+	tmp_index++;
+	
+	tmp_LORA->MyLoRaTmp[Write_LoRa_TxBuffer_Index][18] = PLC_Dev_List_Index[tmp_index].DataBuf.byte[1];
+	tmp_LORA->MyLoRaTmp[Write_LoRa_TxBuffer_Index][19] = PLC_Dev_List_Index[tmp_index].DataBuf.byte[0];
+	tmp_index++;
+	
+	tmp_LORA->MyLoRaTmp[Write_LoRa_TxBuffer_Index][20] = PLC_Dev_List_Index[tmp_index].DataBuf.byte[1];
+	tmp_LORA->MyLoRaTmp[Write_LoRa_TxBuffer_Index][21] = PLC_Dev_List_Index[tmp_index].DataBuf.byte[0];
+	tmp_index++;
+	
+	tmp_LORA->MyLoRaTmp[Write_LoRa_TxBuffer_Index][22] = PLC_Dev_List_Index[tmp_index].DataBuf.byte[1];
+	tmp_LORA->MyLoRaTmp[Write_LoRa_TxBuffer_Index][23] = PLC_Dev_List_Index[tmp_index].DataBuf.byte[0];
+	tmp_index++;
+	
+	tmp_LORA->MyLoRaTmp[Write_LoRa_TxBuffer_Index][24] = Version;
+	
+	tmp_LORA->MyLoRaTmp[Write_LoRa_TxBuffer_Index][25] = 0x00;
+	tmp_LORA->MyLoRaTmp[Write_LoRa_TxBuffer_Index][26] = 0x00;
+
+}
+
+void Print_LoRA02_Upload_Msg(volatile LORA_DEFINE_t *tmp_LORA)
+{
+	volatile LORA_Dev_List_t *LORA_Dev_List_Index = LORA_Dev_List_In_RAM;
+	//Show Mode Display
+	if(tmp_LORA->Lora_Show_Flag == true)
+	{
+		if(PLC_SENSOR_SELECT_FLAG == 0)
+		{
+			Print_Lora_number(tmp_LORA);
+			uart_str("  ^^^   No.\0");
+			if(tmp_LORA->MyLoRaTmp[Write_LoRa_TxBuffer_Index][7] == 0xff)
+				uart_send_word_for_ListNumber(Debug_COM, hex_to_bcd(255));
+			else
+				uart_send_word_for_ListNumber(Debug_COM, hex_to_bcd(LORA_Dev_List_Index[tmp_LORA->List_Now].Dev_Number));
+			uTXByte(Debug_COM, ' ');
+			uart_send_ascii_byte(Debug_COM, tmp_LORA->MyLoRaTmp[Write_LoRa_TxBuffer_Index][3]);
+			uart_send_ascii_byte(Debug_COM, tmp_LORA->MyLoRaTmp[Write_LoRa_TxBuffer_Index][4]);
+			uart_send_ascii_byte(Debug_COM, tmp_LORA->MyLoRaTmp[Write_LoRa_TxBuffer_Index][5]);
+			uart_send_ascii_byte(Debug_COM, tmp_LORA->MyLoRaTmp[Write_LoRa_TxBuffer_Index][6]);
+			uTXByte(Debug_COM, 0x0d);	
+		}
+		else
+		{
+			Print_Lora_number(tmp_LORA);
+			uart_str("  ^^^   PLC.\0");
+			uart_send_ascii_byte(Debug_COM, tmp_LORA->MyLoRaTmp[Write_LoRa_TxBuffer_Index][3]);
+			uart_send_ascii_byte(Debug_COM, tmp_LORA->MyLoRaTmp[Write_LoRa_TxBuffer_Index][4]);
+			uart_send_ascii_byte(Debug_COM, tmp_LORA->MyLoRaTmp[Write_LoRa_TxBuffer_Index][5]);
+			uart_send_ascii_byte(Debug_COM, tmp_LORA->MyLoRaTmp[Write_LoRa_TxBuffer_Index][6]);
+			uTXByte(Debug_COM, ' ');
+			uart_send_ascii_byte(Debug_COM, tmp_LORA->MyLoRaTmp[Write_LoRa_TxBuffer_Index][7]);
+			uTXByte(Debug_COM, ' ');
+			uTXByte(Debug_COM, '[');
+			uart_send_ascii_byte(Debug_COM, tmp_LORA->MyLoRaTmp[Write_LoRa_TxBuffer_Index][8]);
+			uTXByte(Debug_COM, ']');
+			uTXByte(Debug_COM, ' ');
+			uart_send_ascii_byte(Debug_COM, tmp_LORA->MyLoRaTmp[Write_LoRa_TxBuffer_Index][9]);
+			uTXByte(Debug_COM, 0x0d);
+		}
+		Print_Line_Msg();
+		Print_Lora_number(tmp_LORA);
+		for(unsigned char i = 0; i < 28; i++)
+		{
+			uart_send_ascii_byte(Debug_COM, tmp_LORA->MyLoRaTmp[Write_LoRa_TxBuffer_Index][i]);
+			uTXByte(Debug_COM, ' ');
+		}
+		uTXByte(Debug_COM, 0x0d);
+		Print_Line_Msg();
+	}
+}
+
+
+void LoRA2_Send_PLC_Data_Function(volatile LORA_DEFINE_t *tmp_LORA)
+{
+	// PLC回傳程式
+	LORA02_Fill_UpLoad_Function(tmp_LORA);
+	Setting_Lora_To_Tx_Mode_Func(tmp_LORA);
+	Print_LoRA02_Upload_Msg(tmp_LORA);
+	if(PLC_SENSOR_SELECT_FLAG < 2)
+		PLC_SENSOR_SELECT_FLAG++;
+	else
+		PLC_SENSOR_SELECT_FLAG = 0;
+}
+
+void LORA02_MAIN_FUNCTION(volatile LORA_DEFINE_t *tmp_LORA, volatile LORA_Dev_List_t *tmp_LORA_Dev_List_Index)
+{
+	volatile UINT32u_t Target, Source;
+	if(tmp_LORA->NowStatus != Lora_Rx_Data_Ready_Index) return;
+	
+	//倒數兩個byte要為0x33才是需要的數值，因為RSSI不可能出現0x3333
+	if(tmp_LORA->MyBuffer[25] == 0x33 && tmp_LORA->MyBuffer[26] == 0x33)
+	{
+		//擷取封包後段，延伸廣播訊號，18 Byte
+		for(unsigned char i = 0; i < 18; i++)
+		{
+			WriteBufferHex[i] = tmp_LORA->MyBuffer[9+i];
+		}
+		Form_CMD_RS485_Flag = 1;
+	}
+	
+	Target.byte[0] = tmp_LORA->MyLoRaID[0];
+	Target.byte[1] = tmp_LORA->MyLoRaID[1];
+	Target.byte[2] = tmp_LORA->MyLoRaID[2];
+	Target.byte[3] = tmp_LORA->MyLoRaID[3];
+
+	Source.byte[0] = tmp_LORA->MyBuffer[3];
+	Source.byte[1] = tmp_LORA->MyBuffer[4];
+	Source.byte[2] = tmp_LORA->MyBuffer[5];
+	Source.byte[3] = tmp_LORA->MyBuffer[6];
+	
+	switch(Target.dword == Source.dword)
+	{
+		case true:
+			if(tmp_LORA->Lora_Show_Flag == true)
+			{
+				Print_Lora_number(tmp_LORA);
+				uart_str("Yes \0");
+				uart_send_ascii_byte(Debug_COM, tmp_LORA->MyBuffer[3]);
+				uart_send_ascii_byte(Debug_COM, tmp_LORA->MyBuffer[4]);
+				uart_send_ascii_byte(Debug_COM, tmp_LORA->MyBuffer[5]);
+				uart_send_ascii_byte(Debug_COM, tmp_LORA->MyBuffer[6]);
+				uTXByte(Debug_COM, 0x09);
+				uart_str("Input: \0");
+				Print_Write_Buffer();
+				uTXByte(Debug_COM, 0x0d);
+			}
+			break;
+			
+		case false:
+			if(tmp_LORA->Lora_Show_Flag == true)
+			{
+				Print_Lora_number(tmp_LORA);
+				uart_str("Not \0");
+				uart_send_ascii_byte(Debug_COM, tmp_LORA->MyBuffer[3]);
+				uart_send_ascii_byte(Debug_COM, tmp_LORA->MyBuffer[4]);
+				uart_send_ascii_byte(Debug_COM, tmp_LORA->MyBuffer[5]);
+				uart_send_ascii_byte(Debug_COM, tmp_LORA->MyBuffer[6]);
+				uTXByte(Debug_COM, 0x0d);
+			}
+			tmp_LORA->NowStatus = Wait_RX_IRQ_Index;	//如果不是一樣的MAC ID，將跳回去並且進入RX Mode，等待下次命令
+			return;
+			break;
+	}
+	
+
+	//	一次傳SENSOR、一次傳PLC給Master
+	switch(PLC_SENSOR_SELECT_FLAG)
+	{
+		case 0:	//Sensor
+			Find_Now_And_Next_Wait_Upload_Func(tmp_LORA);
+			if(dev_value[tmp_LORA->List_Now][dev_value_New_Data_Input] == Dev_Have_New_Data)	// Sensor有新資料
+			{
+				Setting_Lora_To_Tx_Mode_Func(tmp_LORA);
+				dev_value[tmp_LORA->List_Now][dev_value_New_Data_Input] = Dev_Not_New_Data;
+				Print_LoRA02_Upload_Msg(tmp_LORA);
+			}
+			else	// Sensor沒有新資料，進入傳輸PLC
+			{ 
+				if(tmp_LORA->Lora_Show_Flag == true)
+				{
+					Print_Lora_number(tmp_LORA);
+					if(LORA02->PLC_Flag == NeedPLC)
+						uart_str("No New Data..., So Send the PLC!!\r\0");
+					else
+						uart_str("No New Data...\r\0");
+				}
+				if(LORA02->PLC_Flag == NeedPLC)
+					LoRA2_Send_PLC_Data_Function(tmp_LORA);		// 如果都沒有新資料需要上傳，將送出PLC的資料
+				else
+					tmp_LORA->NowStatus = Wait_RX_IRQ_Index;	// 如果都沒有新資料需要上傳，強迫進入Rx Mode等下一次資料...
+			}
+			if(LORA02->PLC_Flag == NeedPLC)						//	如果PLC Flag有啟動，才會進行切換到PLC回傳程式
+				PLC_SENSOR_SELECT_FLAG = 1;						//	離開傳送Sensor狀態
+			break;
+			
+		default: //PLC
+			LoRA2_Send_PLC_Data_Function(tmp_LORA);
+			break;
+	}
+	
+}
+
+
+//=================================================
+#endif
+//=================================================
